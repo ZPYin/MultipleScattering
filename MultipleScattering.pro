@@ -31,10 +31,7 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
     clTop = clBase + nClLayers*clDh   ; the cloud top. Unit: km
     ; Receiving Stokes vector. (200 Bins since penetrating the cloud)
-    IR = Fltarr(200)
-    QR = Fltarr(200)
-    UR = Fltarr(200)
-    VR = Fltarr(200)
+    SVReturn = Fltarr(200, 4)
     len = 0.0   ; the length in each move. Unit: m
 ;--------------------------------------------------------------------------------------;
 
@@ -59,6 +56,7 @@ PRO MultipleScattering
 ;                                   Simulation
 ;--------------------------------------------------------------------------------------;
     nAngs = Size(scaAngs, /DIM)[1]   ; the number of the angles of the phase function
+    dAng = scaAngs[1] - scaAngs[0]   ; the delta angle. Unit: rad
     
     ; Scattering parameters at each angle
     S1 = DComplex(S1Rel, S1Img) & S2 = DComplex(S2Rel, S2Img)
@@ -99,30 +97,88 @@ PRO MultipleScattering
             ENDIF
 
             ; Probability scattering into the FOV
-            ; still in the FOV?
-            IF (IsInFOV([x,y,z], FOV, rTel, distBeamTel)) THEN BEGIN
-                ; still in the Medium?
-                IF (IsInMedium([x,y,z], [clBase, clTop, clBoundX, clBoundY]*1000.0)) $
-                    THEN BEGIN   ; Calculate the probability scattered into the Lidar
-                    
-                    ; Incident and scattered direction Cosine and 
+            ; still in the Medium?
+            IF (IsInMedium([x,y,z], [clBase, clTop, clBoundX, clBoundY]*1000.0)) $
+                THEN BEGIN
+                ; still in the FOV?
+                IF (IsInFOV([x,y,z], FOV, rTel, distBeamTel)) THEN BEGIN   
+                    ; Calculate the probability scattered into the Lidar
+
+                    ; Incident and scattered direction Cosine
                     phIncDir = phDirCos
                     phScaDir = [distBeamTel/1000.0, 0, 0]-[x, y, z]
                     phScaDir = phScaDir/Sqrt(Total(phScaDir^2))
                     
-                    ; scattering angle. Unit: rad
-                    scaAng = ACOS(phIncDir*phScaDir)
+                    ; scattering angle and rotation angles. Unit: rad
+                    ScaRotAng, phIncDir, phScaDir, $
+                               SCAANG = scaAng, ROTANG1 = rotAng1, ROTANG2 = rotAng2
                     
                     ; Solid angle of the telescope. Unit:Sr
-                    solAng = 4.0*!PI*rTel
-                    
-                ENDIF
-            ENDIF
+                    solAng = 4.0*!PI*(rTel/1000.0)^2/ $ 
+                             Distance_Measure([x,y,z],[distBeamTel/1000.0,0,0],/DOUBLE)
 
+                    ; probability without scattering again until entering the Lidar
+                    iAng = Round(scaAng/dAng)   ; the index of the scattering angle
+                    probEnter = solAng*Exp(-((Total(clDh*muExt[0:iLayer])- $ 
+                               (-z/1000.0+clBase+clDh*(iLayer+1))*muExt[iLayer])/ $ 
+                               COS(phScaDir[2])))
+
+                    ; Stokes vector after scattering
+                    SVTemp1 = RotSphi(SVIn, rotAng1)
+                    SVTemp2 = [[s11[iAng], s12[iAng], 0, 0], $
+                               [s12[iAng], s11[iAng], 0, 0], $
+                               [0, 0, s33[iAng], -s34[iAng]], $
+                               [0, 0, -s34[iAng], s33[iAng]]] ## SVTemp1
+                    SVSca = RotSphi(SVTemp2, -rotAng2)
+
+                    tReturn = (len + (z - clBase/1000.0)/COS(phScaDir[2]))/ $
+                              !constant.c0 * 1E9   ; the time when Receiving. Unit: ns
+                    iTReturn = FIX(tReturn / BinWidth)
+                    SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
+                                            RotSphi(SVSca, -Atanxoy(phScaDir)) * $
+                                            probEnter                    
+                ENDIF
+
+                ; Randomly scattering
+
+                ; Rejection method(Jessica D, Optics Express, 2005)
+                REPEAT BEGIN 
+                    theta = ACOS(2*RandomU(*seed) - 1.0)
+                    phi = RandomU(*seed)*2.0*!PI
+                    PhaseFunc0 = s11[0]*SVIn[0] + $
+                                 s12[0]*(SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
+                    iAng = Round(theta / dAng)
+                    PhaseFuncSca = s11[iAng]*SVIn[0] + $
+                                   s12[iAng]*(SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
+                ENDREP UNTIL (RandomU(*seed)*PhaseFunc0 GE PhaseFuncSca)
+                
+                ; the Stokes Vector of the scattered photon
+                phDirCos = UpdateDir(phDirCos, phi, theta)
+                SVTemp1 = RotSphi(SVIn, phi)
+                SVTemp2 = [[s11[iAng], s12[iAng], 0, 0], $
+                           [s12[iAng], s11[iAng], 0, 0], $
+                           [0, 0, s33[iAng], -s34[iAng]], $
+                           [0, 0, -s34[iAng], s33[iAng]]] ## SVTemp1
+                temp = Sqrt(((1.0-COS(theta)^2) * (1.0-phDirCos[2]^2)))
+                IF (temp EQ 0.0) THEN BEGIN
+                    gammaAng = !PI/2.0
+                ENDIF ELSE BEGIN
+                    gammaAng = ACOS(((phi GT !PI) AND (phi LT 2.0*!PI) ? 1.0: -1.0)* $
+                                    (phDirCos[2]*COS(theta) - phDirCos[2]) / temp )
+                ENDELSE
+                SVIn = RotSphi(SVTemp2, -gammaAng)
+
+            ENDIF ELSE BEGIN
+                ; not in the medium. DEAD
+                photonStatus = DEAD
+                BREAK
+            ENDELSE
 
         ENDWHILE
 
     ENDFOR
 ;--------------------------------------------------------------------------------------;
 
+    ; Data visualization
+    
 END

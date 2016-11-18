@@ -1,9 +1,9 @@
 ;--------------------------------------------------------------------------------------;
 ;                                   Atanxoy
-; vecIn: the input vector
+; DirCos: the input coisne of direction
 ;--------------------------------------------------------------------------------------;
-FUNCTION Atanxoy, vecIn
-    IF vecIn[0] EQ 0.0 THEN Return, 0.5*!PI
-    Return, ATAN(vecIn[1], vecIn[0])
+FUNCTION Atanxoy, DirCos
+    IF DirCos[0] EQ 0.0 THEN Return, 0.5*!PI
+    Return, ATAN(DirCos[1], DirCos[0])
 END
 ;--------------------------------------------------------------------------------------;

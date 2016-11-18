@@ -103,8 +103,19 @@ PRO MultipleScattering
             IF (IsInFOV([x,y,z], FOV, rTel, distBeamTel)) THEN BEGIN
                 ; still in the Medium?
                 IF (IsInMedium([x,y,z], [clBase, clTop, clBoundX, clBoundY]*1000.0)) $
-                    THEN BEGIN
-                    it test
+                    THEN BEGIN   ; Calculate the probability scattered into the Lidar
+                    
+                    ; Incident and scattered direction Cosine and 
+                    phIncDir = phDirCos
+                    phScaDir = [distBeamTel/1000.0, 0, 0]-[x, y, z]
+                    phScaDir = phScaDir/Sqrt(Total(phScaDir^2))
+                    
+                    ; scattering angle. Unit: rad
+                    scaAng = ACOS(phIncDir*phScaDir)
+                    
+                    ; Solid angle of the telescope. Unit:Sr
+                    solAng = 4.0*!PI*rTel
+                    
                 ENDIF
             ENDIF
 

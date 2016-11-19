@@ -16,11 +16,18 @@ PRO MultipleScattering
     
     ; Medium
     clBase = 1.0   ; the cloud base. Unit: km
-    nClLayers = 100.0   ; the number of the layers of the simulated cloud.
-    clDh = 0.003   ; the delta h of each layer. Unit: km
+    nClLayers = 30.0   ; the number of the layers of the simulated cloud.
+    clDh = 0.03   ; the delta h of each layer. Unit: km
+    gamma = Fltarr(nClLayers)+6.0   ; gamma
+    Reff = Fltarr(nClLayers)+8.0   ; effective radius. Unit: micros
+    N0 = Fltarr(nClLayers)+1E8   ; droplets numbers. Unit: m^{-3}
+    nAngs = 1800L   ; the number of scattering angles for Mie scattering
+    relM = DComplex(1.33, 0)   ; the relative refractive index of the medium.     
+    fileMie = 'MieScattering.h5'   ; the h5 file containing the information about Mie scattering
+    
+    ; Monte-Carlo parameters
     thresholdForAlive = 0.01   ; the threshold for determining the photon condition
     chanceForAlive = 0.1   ; the chance in the roulette
-    fileMie = ''   ; the h5 file containing the information about Mie scattering
     
     ALIVE = 1 & DEAD = 0
     photonStatus = DEAD   ; the status of each photon
@@ -36,6 +43,13 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
 
 ;--------------------------------------------------------------------------------------;
+;                                   Clouds Paramters
+;--------------------------------------------------------------------------------------;
+;    WaterMieScattering, nClLayers, gamma, Reff, N0, nAngs, relM, lambda, $
+;                        FILE = fileMie
+;--------------------------------------------------------------------------------------;
+
+;--------------------------------------------------------------------------------------;
 ;                                   Read data
 ;--------------------------------------------------------------------------------------;
     S1Rel = ReadH5(fileMie, '/S1Rel')
@@ -43,28 +57,30 @@ PRO MultipleScattering
     S2Rel = ReadH5(fileMie, '/S2Rel')
     S2Img = ReadH5(fileMie, '/S2Img')
     scaAngs = ReadH5(fileMie, '/scaAngs')
-    muExt = ReadH5(fileMie, '/Extinction')   ; extinction. Unit: km^{-1}
-    muSca = ReadH5(fileMie, '/Scattering')   ; scattering. Unit: km^{-1}
+    muExt = ReadH5(fileMie, '/Extinction')   ; extinction. Unit: m^{-1}
+    muSca = ReadH5(fileMie, '/Scattering')   ; scattering. Unit: m^{-1}
 ;--------------------------------------------------------------------------------------;
     ; Usually bound corresponding to an optical depth of 2
     ; DM Winker and LR Poole, "Monte-Carlo calculations of 
     ; cloud returns for ground-based and space-based lidars," 
-    ; Applied Physics B 60 (4), 341-344 (1995).    
-    clBoundX = 1.0/Mean(muExt)   ; the boundary of the cloud in X direction. Unit: km
-    clBoundY = 1.0/Mean(muSca)   ; the boundary of the cloud in Y direction. Unit: km
+    ; Applied Physics B 60 (4), 341-344 (1995).   
+    ; Note: we set 4. 
+    clBoundX = 2.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
+                                        ; in X direction. Unit: km
+    clBoundY = 2.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
+                                        ; in Y direction. Unit: km
 ;--------------------------------------------------------------------------------------;
 ;                                   Simulation
 ;--------------------------------------------------------------------------------------;
-    nAngs = Size(scaAngs, /DIM)[1]   ; the number of the angles of the phase function
     dAng = scaAngs[1] - scaAngs[0]   ; the delta angle. Unit: rad
     
     ; Scattering parameters at each angle
     S1 = DComplex(S1Rel, S1Img) & S2 = DComplex(S2Rel, S2Img)
-    s11 = 0.5*(Abs(S1)^2 + Abs(S2)^2)
-    s12 = 0.5*(Abs(S2)^2 - Abs(S1)^2)
-    s33 = 0.5*(Conj(S2)*S1 + S2*Conj(S1))
-    s34 = DComplex(0, -0.5)*(S1*Conj(S2) - S2*Conj(S1))
-    albedo = muSca/(muSca+muExt)
+    s11 = Real_Part(0.5*(Abs(S1)^2 + Abs(S2)^2))
+    s12 = Real_Part(0.5*(Abs(S2)^2 - Abs(S1)^2))
+    s33 = Real_Part(0.5*(Conj(S2)*S1 + S2*Conj(S1)))
+    s34 = Real_Part(DComplex(0, -0.5)*(S1*Conj(S2) - S2*Conj(S1)))
+    albedo = muSca/muExt
     
     seed = Ptr_New(100L)   ; Initial the seed pointer for random number generator
     
@@ -72,9 +88,10 @@ PRO MultipleScattering
     
         ; Launch
         Launch, 'Planar', (rBeam+divBeam/2.0*clBase*1000.0)/1000.0, seed, X = x, Y = y
-        z = clBase*1000.0   ; Unit: m
+        z = DOUBLE(clBase*1000.0) & x = DOUBLE(x) & y = DOUBLE(y)  ; Unit: m
         len = Distance_Measure([[x,y,z], [0,0,0]], /DOUBLE)
         phDirCos = [x, y, z]/len
+        len = 0.0
         SVIn = LaunchStokes(SBeam, [x, y, z])
         photonStatus = ALIVE
         iLayer = 0   ; the number of the layer that the photon is.
@@ -84,10 +101,11 @@ PRO MultipleScattering
             ; Move to the next point
             rnd = RandomU(*seed)
             rnd = (rnd EQ 0.0)? 1-rnd : rnd
-            len = len-Alog(rnd)/(muSca[iLayer]+muExt[iLayer])
-            x = x + phDirCos[0]*len
-            y = y + phDirCos[1]*len
-            z = z + phDirCos[2]*len
+            ds = -Alog(rnd)/muExt[iLayer]
+            x = x + phDirCos[0]*ds
+            y = y + phDirCos[1]*ds
+            z = z + phDirCos[2]*ds
+            len = len + ds
             iLayer = FIX((z-clBase*1000.0) / (clDh*1000.0))
 
             ; absorb?
@@ -115,20 +133,22 @@ PRO MultipleScattering
                     
                     ; Solid angle of the telescope. Unit:Sr
                     solAng = 4.0*!PI*(rTel/1000.0)^2/ $ 
-                             Distance_Measure([x,y,z],[distBeamTel/1000.0,0,0],/DOUBLE)
+                             Distance_Measure([[x,y,z],[distBeamTel/1000.0,0,0]], $
+                                              /DOUBLE)
 
                     ; probability without scattering again until entering the Lidar
                     iAng = Round(scaAng/dAng)   ; the index of the scattering angle
                     probEnter = solAng*Exp(-((Total(clDh*muExt[0:iLayer])- $ 
                                (-z/1000.0+clBase+clDh*(iLayer+1))*muExt[iLayer])/ $ 
-                               COS(phScaDir[2])))
+                               COS(phScaDir[2]))*1000.0)
 
                     ; Stokes vector after scattering
                     SVTemp1 = RotSphi(SVIn, rotAng1)
-                    SVTemp2 = [[s11[iAng], s12[iAng], 0, 0], $
-                               [s12[iAng], s11[iAng], 0, 0], $
-                               [0, 0, s33[iAng], -s34[iAng]], $
-                               [0, 0, -s34[iAng], s33[iAng]]] ## SVTemp1
+                    SVTemp2 = [[s11[iLayer, iAng], s12[iLayer, iAng], 0, 0], $
+                               [s12[iLayer, iAng], s11[iLayer, iAng], 0, 0], $
+                               [0, 0, s33[iLayer, iAng], -s34[iLayer, iAng]], $
+                               [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] $
+                               ## SVTemp1
                     SVSca = RotSphi(SVTemp2, -rotAng2)
 
                     tReturn = (len + (z - clBase/1000.0)/COS(phScaDir[2]))/ $
@@ -145,20 +165,22 @@ PRO MultipleScattering
                 REPEAT BEGIN 
                     theta = ACOS(2*RandomU(*seed) - 1.0)
                     phi = RandomU(*seed)*2.0*!PI
-                    PhaseFunc0 = s11[0]*SVIn[0] + $
-                                 s12[0]*(SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
+                    PhaseFunc0 = s11[iLayer, 0]*SVIn[0] + $
+                                 s12[iLayer, 0]* $
+                                 (SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
                     iAng = Round(theta / dAng)
-                    PhaseFuncSca = s11[iAng]*SVIn[0] + $
-                                   s12[iAng]*(SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
+                    PhaseFuncSca = s11[iLayer, iAng]*SVIn[0] + $
+                                   s12[iLayer, iAng]* $
+                                   (SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
                 ENDREP UNTIL (RandomU(*seed)*PhaseFunc0 GE PhaseFuncSca)
                 
                 ; the Stokes Vector of the scattered photon
                 phDirCos = UpdateDir(phDirCos, phi, theta)
                 SVTemp1 = RotSphi(SVIn, phi)
-                SVTemp2 = [[s11[iAng], s12[iAng], 0, 0], $
-                           [s12[iAng], s11[iAng], 0, 0], $
-                           [0, 0, s33[iAng], -s34[iAng]], $
-                           [0, 0, -s34[iAng], s33[iAng]]] ## SVTemp1
+                SVTemp2 = [[s11[iLayer, iAng], s12[iLayer, iAng], 0, 0], $
+                           [s12[iLayer, iAng], s11[iLayer, iAng], 0, 0], $
+                           [0, 0, s33[iLayer, iAng], -s34[iLayer, iAng]], $
+                           [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] ## SVTemp1
                 temp = Sqrt(((1.0-COS(theta)^2) * (1.0-phDirCos[2]^2)))
                 IF (temp EQ 0.0) THEN BEGIN
                     gammaAng = !PI/2.0

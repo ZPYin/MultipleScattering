@@ -9,7 +9,8 @@ PRO MultipleScattering
     divBeam = 0.05   ; the divergence of the laser beam. Unit: mrad
     FOV = 1.0   ; the field of view(Full angle). Unit: mrad
     rTel = 150   ; the radius of the telescope. Unit: mm
-    BinWidth = 200.0   ; the width of each bin. Unit: ns
+    BinWidth = 20.0   ; the width of each bin. Unit: ns
+    nBins = 200   ; the number of the recording bins
     distBeamTel = 300   ; the distance between laser beam and the centre of the 
                         ; telescope. Unit: mm
     SBeam = [1, 1, 0, 0]   ; the stokes vector of the incident laser beam.
@@ -19,11 +20,11 @@ PRO MultipleScattering
     nClLayers = 30.0   ; the number of the layers of the simulated cloud.
     clDh = 0.03   ; the delta h of each layer. Unit: km
     gamma = Fltarr(nClLayers)+6.0   ; gamma
-    Reff = Fltarr(nClLayers)+8.0   ; effective radius. Unit: micros
-    N0 = Fltarr(nClLayers)+1E8   ; droplets numbers. Unit: m^{-3}
+    Reff = Fltarr(nClLayers)+0.677   ; effective radius. Unit: micros
+    N0 = Fltarr(nClLayers)+1E10   ; droplets numbers. Unit: m^{-3}
     nAngs = 1800L   ; the number of scattering angles for Mie scattering
     relM = DComplex(1.33, 0)   ; the relative refractive index of the medium.     
-    fileMie = 'MieScattering.h5'   ; the h5 file containing the information about Mie scattering
+    fileMie = 'MieScattering_x8.h5'   ; the h5 file containing the information about Mie scattering
     
     ; Monte-Carlo parameters
     thresholdForAlive = 0.01   ; the threshold for determining the photon condition
@@ -38,8 +39,9 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
     clTop = clBase + nClLayers*clDh   ; the cloud top. Unit: km
     ; Receiving Stokes vector. (200 Bins since penetrating the cloud)
-    SVReturn = Fltarr(200, 4)
-    len = 0.0   ; the length in each move. Unit: m
+    SVReturn = Fltarr(nBins, 4)
+    len = Fltarr(nPhotons)   ; the length in each move. Unit: m
+    nScatterings = Lonarr(nPhotons)   ; the number of the scatterings
 ;--------------------------------------------------------------------------------------;
 
 ;--------------------------------------------------------------------------------------;
@@ -69,6 +71,7 @@ PRO MultipleScattering
                                         ; in X direction. Unit: km
     clBoundY = 2.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
                                         ; in Y direction. Unit: km
+                                        
 ;--------------------------------------------------------------------------------------;
 ;                                   Simulation
 ;--------------------------------------------------------------------------------------;
@@ -81,7 +84,7 @@ PRO MultipleScattering
     s33 = Real_Part(0.5*(Conj(S2)*S1 + S2*Conj(S1)))
     s34 = Real_Part(DComplex(0, -0.5)*(S1*Conj(S2) - S2*Conj(S1)))
     albedo = muSca/muExt
-    
+                 
     seed = Ptr_New(100L)   ; Initial the seed pointer for random number generator
     
     FOR iPhoton = 0, nPhotons-1 DO BEGIN
@@ -89,9 +92,9 @@ PRO MultipleScattering
         ; Launch
         Launch, 'Planar', (rBeam+divBeam/2.0*clBase*1000.0)/1000.0, seed, X = x, Y = y
         z = DOUBLE(clBase*1000.0) & x = DOUBLE(x) & y = DOUBLE(y)  ; Unit: m
-        len = Distance_Measure([[x,y,z], [0,0,0]], /DOUBLE)
-        phDirCos = [x, y, z]/len
-        len = 0.0
+        len[iPhoton] = Distance_Measure([[x,y,z], [0,0,0]], /DOUBLE)
+        phDirCos = [x, y, z]/len[iPhoton]
+        len[iPhoton] = 0.0
         SVIn = LaunchStokes(SBeam, [x, y, z])
         photonStatus = ALIVE
         iLayer = 0   ; the number of the layer that the photon is.
@@ -105,19 +108,18 @@ PRO MultipleScattering
             x = x + phDirCos[0]*ds
             y = y + phDirCos[1]*ds
             z = z + phDirCos[2]*ds
-            len = len + ds
+            len[iPhoton] = len[iPhoton] + ds
             iLayer = FIX((z-clBase*1000.0) / (clDh*1000.0))
-
-            ; absorb?
-            IF IsAbsorb(muSca[iLayer], muExt[iLayer], seed) THEN BEGIN
-                photonStatus = DEAD
-                BREAK
-            ENDIF
 
             ; Probability scattering into the FOV
             ; still in the Medium?
             IF (IsInMedium([x,y,z], [clBase, clTop, clBoundX, clBoundY]*1000.0)) $
                 THEN BEGIN
+                ; absorb?
+                IF IsAbsorb(muSca[iLayer], muExt[iLayer], seed) THEN BEGIN
+                    photonStatus = DEAD
+                    BREAK
+                ENDIF
                 ; still in the FOV?
                 IF (IsInFOV([x,y,z], FOV, rTel, distBeamTel)) THEN BEGIN   
                     ; Calculate the probability scattered into the Lidar
@@ -140,7 +142,7 @@ PRO MultipleScattering
                     iAng = Round(scaAng/dAng)   ; the index of the scattering angle
                     probEnter = solAng*Exp(-((Total(clDh*muExt[0:iLayer])- $ 
                                (-z/1000.0+clBase+clDh*(iLayer+1))*muExt[iLayer])/ $ 
-                               COS(phScaDir[2]))*1000.0)
+                               Abs(phScaDir[2]))*1000.0)
 
                     ; Stokes vector after scattering
                     SVTemp1 = RotSphi(SVIn, rotAng1)
@@ -150,13 +152,16 @@ PRO MultipleScattering
                                [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] $
                                ## SVTemp1
                     SVSca = RotSphi(SVTemp2, -rotAng2)
+                    SVSca = SVSca/s11[0, 0]
 
-                    tReturn = (len + (z - clBase/1000.0)/COS(phScaDir[2]))/ $
+                    tReturn = (len[iPhoton] + (z - clBase*1000.0)/Abs(phScaDir[2]))/ $
                               !constant.c0 * 1E9   ; the time when Receiving. Unit: ns
                     iTReturn = FIX(tReturn / BinWidth)
                     SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
-                                            RotSphi(SVSca, -Atanxoy(phScaDir)) * $
-                                            probEnter                    
+                                            RotSphi(SVSca, Atanxoy(phScaDir)) * $
+                                            probEnter
+                    IF ~FINITE(TOTAL(SVReturn[iTReturn, *])) THEN STOP
+                    ;IF scaAng LT 30.0/180.0*!PI THEN STOP                   
                 ENDIF
 
                 ; Randomly scattering
@@ -175,6 +180,8 @@ PRO MultipleScattering
                 ENDREP UNTIL (RandomU(*seed)*PhaseFunc0 GE PhaseFuncSca)
                 
                 ; the Stokes Vector of the scattered photon
+                phIncDirCos = phDirCos   ; saving the direction cosine of the incident
+                                         ; photon
                 phDirCos = UpdateDir(phDirCos, phi, theta)
                 SVTemp1 = RotSphi(SVIn, phi)
                 SVTemp2 = [[s11[iLayer, iAng], s12[iLayer, iAng], 0, 0], $
@@ -185,14 +192,22 @@ PRO MultipleScattering
                 IF (temp EQ 0.0) THEN BEGIN
                     gammaAng = !PI/2.0
                 ENDIF ELSE BEGIN
-                    gammaAng = ACOS(((phi GT !PI) AND (phi LT 2.0*!PI) ? 1.0: -1.0)* $
-                                    (phDirCos[2]*COS(theta) - phDirCos[2]) / temp )
+                    gammaAngCos = ((phi GT !PI) AND (phi LT 2.0*!PI) ? 1.0: -1.0)* $
+                                  (phDirCos[2]*COS(theta) - phIncDirCos[2]) / temp 
+                    IF gammaAngCos LE -1.0 THEN gammaAngCos = -1.0 ELSE $
+                    IF gammaAngCos GE 1.0 THEN gammaAngCos = 1.0
+                    gammaAng = ACOS(gammaAngCos)
                 ENDELSE
                 SVIn = RotSphi(SVTemp2, -gammaAng)
+                SVIn = SVIn/s11[0, 0]    ; normalized
+                nScatterings[iPhoton] = nScatterings[iPhoton] + 1
 
             ENDIF ELSE BEGIN
                 ; not in the medium. DEAD
                 photonStatus = DEAD
+                        Print, 'Photon '+ String(iPhoton, FORMAT='(I5)')+' is Dead!'
+                        Print, String(len[iPhoton], FORMAT='(F6.2)')
+                        Print, String(nScatterings[iPhoton], FORMAT='(I5)')
                 BREAK
             ENDELSE
 
@@ -201,6 +216,51 @@ PRO MultipleScattering
     ENDFOR
 ;--------------------------------------------------------------------------------------;
 
-    ; Data visualization
+;--------------------------------------------------------------------------------------;
+;                                    Data visualization
+;--------------------------------------------------------------------------------------;
+
+    ; Cloud droplet scattering phase function
+    W1 = Window(DIMENSION=[400,600])
+    p1 = Plot(scaAngs*180.0/!PI, s11[0, *]/s11[0, 0], /CURRENT, $
+              XTITLE='Scattering Angles($\deg$)', YTITLE='Phase Function(Normalized)', $
+              XRANGE=[0,180], YRANGE=[1E-4, 1], /YLOG)
+    t = Text(140, 0.9, $
+             '$\sigma$='+String(muExt[0], FORMAT='(F4.1)')+ '$m^{-1}$'+ $
+             '\n$R_eff$='+String(Reff[0], FORMAT='(F3.1)')+'$\mum$'+ $
+             '\n$\gamma$='+String(gamma[0], FORMAT='(I02)'), /DATA, FONT_SIZE=10) 
+                
+    ; Stokes vector
+    W2 = Window(DIMENSION=[1256,907])
+    p1 = Plot(SVReturn[*, 0], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
+              /CURRENT, TITLE='Stokes Vector', $
+              COLOR='r', $
+              NAME='I', LAYOUT=[3, 1, 1])
+    p2 = Plot(SVReturn[*, 1], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
+              /OVERPLOT, $
+              COLOR='g', NAME='Q')
+    p3 = Plot(SVReturn[*, 2], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
+              /OVERPLOT, $
+              COLOR='b', NAME='U')
+    p4 = Plot(SVReturn[*, 3], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
+              /OVERPLOT, $
+              COLOR='cyan', NAME='V')
+    l1 = Legend(TARGET=[p1, p2, p3, p4], POSITION=[0.2, 0.8])
+    
+    ; Polarization
+    deRatio = (SVReturn[*, 0] - SVReturn[*,1])/(SVReturn[*, 0] + SVReturn[*,1])
+    p5 = Plot(deRatio, Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
+              /CURRENT, LAYOUT=[3,1,2], $
+              XRANGE=[0, 1.0], YRANGE=[0, 0.8], $
+              XTITLE='Depolarization Ratio', YTITLE='Height(km)')
+    
+    ; Number of scatterings
+    nNScatterings = HistoGram(nScatterings, BINSIZE=1, MAX=30, MIN=1, $
+                              REVERSE_INDICES=rIndex, LOCATIONS=temp)
+    p6 = BarPlot(Findgen(30)+1, nNScatterings, /CURRENT, LAYOUT=[3,1,3], $
+                 XRANGE=[-1,32], $
+                 XTITLE='N Scatterings', YTITLE='Frequency', $
+                 FILL_COLOR='r')                          
+;--------------------------------------------------------------------------------------;
     
 END

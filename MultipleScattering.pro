@@ -3,7 +3,7 @@ PRO MultipleScattering
 ;                                   Parameters Initialize
 ;--------------------------------------------------------------------------------------;
     ; Lidar
-    nPhotons = 1E4   ; the number of generated photons
+    nPhotons = 1E3   ; the number of generated photons
     lambda = 532.0   ; the wavelength of the photons. Unit: nm
     rBeam = 5.0    ; the radius of the laser beam at z=0km. Unit: mm
     divBeam = 0.05   ; the divergence of the laser beam. Unit: mrad
@@ -16,15 +16,15 @@ PRO MultipleScattering
     SBeam = [1, 1, 0, 0]   ; the stokes vector of the incident laser beam.
     
     ; Medium
-    clBase = 1.0   ; the cloud base. Unit: km
+    clBase = 3.0   ; the cloud base. Unit: km
     nClLayers = 30.0   ; the number of the layers of the simulated cloud.
     clDh = 0.03   ; the delta h of each layer. Unit: km
     gamma = Fltarr(nClLayers)+6.0   ; gamma
-    Reff = Fltarr(nClLayers)+0.677   ; effective radius. Unit: micros
-    N0 = Fltarr(nClLayers)+1E10   ; droplets numbers. Unit: m^{-3}
+    Reff = Fltarr(nClLayers)+8.0   ; effective radius. Unit: micros
+    N0 = Fltarr(nClLayers)+1E8   ; droplets numbers. Unit: m^{-3}
     nAngs = 1800L   ; the number of scattering angles for Mie scattering
     relM = DComplex(1.33, 0)   ; the relative refractive index of the medium.     
-    fileMie = 'MieScattering_x8.h5'   ; the h5 file containing the information about Mie scattering
+    fileMie = 'MieScattering.h5'   ; the h5 file containing the information about Mie scattering
     
     ; Monte-Carlo parameters
     thresholdForAlive = 0.01   ; the threshold for determining the photon condition
@@ -121,7 +121,9 @@ PRO MultipleScattering
                     BREAK
                 ENDIF
                 ; still in the FOV?
-                IF (IsInFOV([x,y,z], FOV, rTel, distBeamTel)) THEN BEGIN   
+                IF (IsInFOV([x,y,z], FOV, rTel*2.0, distBeamTel)) THEN BEGIN 
+                    ; test 
+                    ; IF nScatterings[iPhoton] NE 0 THEN Stop 
                     ; Calculate the probability scattered into the Lidar
 
                     ; Incident and scattered direction Cosine
@@ -157,11 +159,16 @@ PRO MultipleScattering
                     tReturn = (len[iPhoton] + (z - clBase*1000.0)/Abs(phScaDir[2]))/ $
                               !constant.c0 * 1E9   ; the time when Receiving. Unit: ns
                     iTReturn = FIX(tReturn / BinWidth)
-                    SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
-                                            RotSphi(SVSca, Atanxoy(phScaDir)) * $
-                                            probEnter
-                    IF ~FINITE(TOTAL(SVReturn[iTReturn, *])) THEN STOP
-                    ;IF scaAng LT 30.0/180.0*!PI THEN STOP                   
+                    IF iTReturn LT nBins-1 THEN BEGIN 
+                        SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
+                                                RotSphi(SVSca, Atanxoy(phScaDir)) * $
+                                                probEnter
+                        ;; test
+                        ;Print, SVReturn[iTReturn, *] 
+                        ;Print, scaAng
+                        ;IF scaAng LT 30.0/180.0*!PI THEN STOP
+                    ENDIF
+                                     
                 ENDIF
 
                 ; Randomly scattering
@@ -177,7 +184,7 @@ PRO MultipleScattering
                     PhaseFuncSca = s11[iLayer, iAng]*SVIn[0] + $
                                    s12[iLayer, iAng]* $
                                    (SVIn[1]*COS(2.0*phi)+SVIn[2]*SIN(2.0*phi))
-                ENDREP UNTIL (RandomU(*seed)*PhaseFunc0 GE PhaseFuncSca)
+                ENDREP UNTIL (RandomU(*seed)*PhaseFunc0 LT PhaseFuncSca)
                 
                 ; the Stokes Vector of the scattered photon
                 phIncDirCos = phDirCos   ; saving the direction cosine of the incident
@@ -199,15 +206,15 @@ PRO MultipleScattering
                     gammaAng = ACOS(gammaAngCos)
                 ENDELSE
                 SVIn = RotSphi(SVTemp2, -gammaAng)
-                SVIn = SVIn/s11[0, 0]    ; normalized
+                SVIn = SVIn/SVIn[0]    ; normalized
                 nScatterings[iPhoton] = nScatterings[iPhoton] + 1
 
             ENDIF ELSE BEGIN
                 ; not in the medium. DEAD
                 photonStatus = DEAD
-                        Print, 'Photon '+ String(iPhoton, FORMAT='(I5)')+' is Dead!'
-                        Print, String(len[iPhoton], FORMAT='(F6.2)')
-                        Print, String(nScatterings[iPhoton], FORMAT='(I5)')
+                Print, 'Photon '+ String(iPhoton, FORMAT='(I7)')+' is Dead!'
+                Print, String(len[iPhoton], FORMAT='(F6.2)')
+                Print, String(nScatterings[iPhoton], FORMAT='(I5)')
                 BREAK
             ENDELSE
 
@@ -225,13 +232,13 @@ PRO MultipleScattering
     p1 = Plot(scaAngs*180.0/!PI, s11[0, *]/s11[0, 0], /CURRENT, $
               XTITLE='Scattering Angles($\deg$)', YTITLE='Phase Function(Normalized)', $
               XRANGE=[0,180], YRANGE=[1E-4, 1], /YLOG)
-    t = Text(140, 0.9, $
-             '$\sigma$='+String(muExt[0], FORMAT='(F4.1)')+ '$m^{-1}$'+ $
-             '\n$R_eff$='+String(Reff[0], FORMAT='(F3.1)')+'$\mum$'+ $
-             '\n$\gamma$='+String(gamma[0], FORMAT='(I02)'), /DATA, FONT_SIZE=10) 
+    t = Text(0.5, 0.7, $
+             ['$\sigma$='+String(muExt[0]*1000.0, FORMAT='(F5.1)')+ '$km^{-1}$', $
+             '$R_{eff}$='+String(Reff[0], FORMAT='(F3.1)')+'$\mum$', $
+             '$\gamma$='+String(gamma[0], FORMAT='(I2)')], FONT_SIZE=15) 
                 
     ; Stokes vector
-    W2 = Window(DIMENSION=[1256,907])
+    W2 = Window(DIMENSION=[600,500])
     p1 = Plot(SVReturn[*, 0], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
               /CURRENT, TITLE='Stokes Vector', $
               COLOR='r', $

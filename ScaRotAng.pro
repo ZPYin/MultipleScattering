@@ -10,7 +10,9 @@ PRO ScaRotAng, incDir, scaDir, $
 	phiSca = Atanxoy(scaDir)   ; Azimuth. Unit: rad
 	thetaInc = ACOS(incDir[2]) ; Zenith. Unit: rad
 	thetaSca = ACOS(scaDir[2]) ; Zenith. Unit: rad
-
+    
+    IF Total(incDir*scaDir) GE 1.0 THEN scaAng = 0.0 ELSE $
+    IF Total(incDir*scaDir) LE -1.0 THEN scaAng = !PI ELSE $
 	scaAng = ACOS(Total(incDir*scaDir))   ; Scattering angle. Unit: rad
 
 	IF ABS((SIN(scaAng))) LT 1E-12 THEN BEGIN
@@ -20,13 +22,13 @@ PRO ScaRotAng, incDir, scaDir, $
 
 	IF (1.0 - ABS(incDir[2])) LE 1E-12 THEN BEGIN
 		rotAng1 = ACOS(incDir[2]*COS(phiSca - phiInc))
-		rotAng2 = incDir[2]
+		rotAng2 = ACOS(incDir[2])
 		Return
 	ENDIF
 
 	IF (1.0 - ABS(scaDir[2])) LE 1E-12 THEN BEGIN
 		rotAng1 = ACOS(scaDir[2]*COS(phiSca - phiInc))
-		rotAng2 = scaDir[2]
+		rotAng2 = ACOS(scaDir[2])
 		Return
 	ENDIF
     

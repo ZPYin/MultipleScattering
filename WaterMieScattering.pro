@@ -63,7 +63,10 @@ PRO WaterMieScattering, nLayers, gamma, Reff, N0, nAngles, m, lambda, $
         WriteH5, S2Img, file, /APPEND, VARNAME = 'S2Img'
         WriteH5, muExt, file, /APPEND, VARNAME = 'Extinction'
         WriteH5, muSca, file, /APPEND, VARNAME = 'Scattering'
-        WriteH5, angles*!PI/180.0, file, /APPEND, VARNAME = 'scaAngs'        
+        WriteH5, angles*!PI/180.0, file, /APPEND, VARNAME = 'scaAngs' 
+        WriteH5, gamma, file, /APPEND, VARNAME = 'gamma'
+        WriteH5, Reff, file, /APPEND, VARNAME = 'Reff'
+        WriteH5, N0, file, /APPEND, VARNAME = 'N0'     
     ENDIF
 END
                                  

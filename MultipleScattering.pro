@@ -2,6 +2,8 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
 ;                                   Parameters Initialize
 ;--------------------------------------------------------------------------------------;
+    test = Fltarr(30000)
+    i = 0L
     ; Lidar
     nPhotons = 1E3   ; the number of generated photons
     lambda = 532.0   ; the wavelength of the photons. Unit: nm
@@ -150,7 +152,7 @@ PRO MultipleScattering
                     SVTemp1 = RotSphi(SVIn, rotAng1)
                     SVTemp2 = [[s11[iLayer, iAng], s12[iLayer, iAng], 0, 0], $
                                [s12[iLayer, iAng], s11[iLayer, iAng], 0, 0], $
-                               [0, 0, s33[iLayer, iAng], -s34[iLayer, iAng]], $
+                               [0, 0, s33[iLayer, iAng], s34[iLayer, iAng]], $
                                [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] $
                                ## SVTemp1
                     SVSca = RotSphi(SVTemp2, -rotAng2)
@@ -163,6 +165,8 @@ PRO MultipleScattering
                         SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
                                                 RotSphi(SVSca, Atanxoy(phScaDir)) * $
                                                 probEnter
+;                        Print, 'iTReturn: '+ String(iTReturn, FORMAT='(I4)')
+;                        Print, SVReturn[iTReturn, *]
                         ;; test
                         ;Print, SVReturn[iTReturn, *] 
                         ;Print, scaAng
@@ -193,7 +197,7 @@ PRO MultipleScattering
                 SVTemp1 = RotSphi(SVIn, phi)
                 SVTemp2 = [[s11[iLayer, iAng], s12[iLayer, iAng], 0, 0], $
                            [s12[iLayer, iAng], s11[iLayer, iAng], 0, 0], $
-                           [0, 0, s33[iLayer, iAng], -s34[iLayer, iAng]], $
+                           [0, 0, s33[iLayer, iAng], s34[iLayer, iAng]], $
                            [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] ## SVTemp1
                 temp = Sqrt(((1.0-COS(theta)^2) * (1.0-phDirCos[2]^2)))
                 IF (temp EQ 0.0) THEN BEGIN
@@ -226,7 +230,6 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
 ;                                    Data visualization
 ;--------------------------------------------------------------------------------------;
-
     ; Cloud droplet scattering phase function
     W1 = Window(DIMENSION=[400,600])
     p1 = Plot(scaAngs*180.0/!PI, s11[0, *]/s11[0, 0], /CURRENT, $

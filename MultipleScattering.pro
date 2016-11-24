@@ -2,17 +2,15 @@ PRO MultipleScattering
 ;--------------------------------------------------------------------------------------;
 ;                                   Parameters Initialize
 ;--------------------------------------------------------------------------------------;
-    test = Fltarr(30000)
-    i = 0L
     ; Lidar
-    nPhotons = 1E3   ; the number of generated photons
+    nPhotons = 1E5   ; the number of generated photons
     lambda = 532.0   ; the wavelength of the photons. Unit: nm
     rBeam = 5.0    ; the radius of the laser beam at z=0km. Unit: mm
     divBeam = 0.05   ; the divergence of the laser beam. Unit: mrad
     FOV = 1.0   ; the field of view(Full angle). Unit: mrad
     rTel = 150   ; the radius of the telescope. Unit: mm
     BinWidth = 20.0   ; the width of each bin. Unit: ns
-    nBins = 200   ; the number of the recording bins
+    nBins = 100   ; the number of the recording bins
     distBeamTel = 300   ; the distance between laser beam and the centre of the 
                         ; telescope. Unit: mm
     SBeam = [1, 1, 0, 0]   ; the stokes vector of the incident laser beam.
@@ -20,17 +18,13 @@ PRO MultipleScattering
     ; Medium
     clBase = 3.0   ; the cloud base. Unit: km
     nClLayers = 30.0   ; the number of the layers of the simulated cloud.
-    clDh = 0.03   ; the delta h of each layer. Unit: km
+    clDh = 0.008   ; the delta h of each layer. Unit: km
     gamma = Fltarr(nClLayers)+6.0   ; gamma
     Reff = Fltarr(nClLayers)+8.0   ; effective radius. Unit: micros
-    N0 = Fltarr(nClLayers)+1E8   ; droplets numbers. Unit: m^{-3}
+    N0 = Fltarr(nClLayers)+0.5E8   ; droplets numbers. Unit: m^{-3}
     nAngs = 1800L   ; the number of scattering angles for Mie scattering
     relM = DComplex(1.33, 0)   ; the relative refractive index of the medium.     
-    fileMie = 'MieScattering.h5'   ; the h5 file containing the information about Mie scattering
-    
-    ; Monte-Carlo parameters
-    thresholdForAlive = 0.01   ; the threshold for determining the photon condition
-    chanceForAlive = 0.1   ; the chance in the roulette
+    fileMie = 'MieScattering_ext002.h5'   ; the h5 file containing the information about Mie scattering
     
     ALIVE = 1 & DEAD = 0
     photonStatus = DEAD   ; the status of each photon
@@ -42,6 +36,7 @@ PRO MultipleScattering
     clTop = clBase + nClLayers*clDh   ; the cloud top. Unit: km
     ; Receiving Stokes vector. (200 Bins since penetrating the cloud)
     SVReturn = Fltarr(nBins, 4)
+    nPhotonBin = LonArr(nBins)
     len = Fltarr(nPhotons)   ; the length in each move. Unit: m
     nScatterings = Lonarr(nPhotons)   ; the number of the scatterings
 ;--------------------------------------------------------------------------------------;
@@ -69,9 +64,9 @@ PRO MultipleScattering
     ; cloud returns for ground-based and space-based lidars," 
     ; Applied Physics B 60 (4), 341-344 (1995).   
     ; Note: we set 4. 
-    clBoundX = 2.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
+    clBoundX = 1.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
                                         ; in X direction. Unit: km
-    clBoundY = 2.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
+    clBoundY = 1.0/Mean(muExt)/1000.0   ; the boundary of the cloud 
                                         ; in Y direction. Unit: km
                                         
 ;--------------------------------------------------------------------------------------;
@@ -87,7 +82,7 @@ PRO MultipleScattering
     s34 = Real_Part(DComplex(0, -0.5)*(S1*Conj(S2) - S2*Conj(S1)))
     albedo = muSca/muExt
                  
-    seed = Ptr_New(100L)   ; Initial the seed pointer for random number generator
+    seed = Ptr_New(1L)   ; Initial the seed pointer for random number generator
     
     FOR iPhoton = 0, nPhotons-1 DO BEGIN
     
@@ -156,7 +151,7 @@ PRO MultipleScattering
                                [0, 0, -s34[iLayer, iAng], s33[iLayer, iAng]]] $
                                ## SVTemp1
                     SVSca = RotSphi(SVTemp2, -rotAng2)
-                    SVSca = SVSca/s11[0, 0]
+                    SVSca = SVSca/s11[iLayer, 0]
 
                     tReturn = (len[iPhoton] + (z - clBase*1000.0)/Abs(phScaDir[2]))/ $
                               !constant.c0 * 1E9   ; the time when Receiving. Unit: ns
@@ -165,12 +160,8 @@ PRO MultipleScattering
                         SVReturn[iTReturn, *] = SVReturn[iTReturn, *] + $
                                                 RotSphi(SVSca, Atanxoy(phScaDir)) * $
                                                 probEnter
-;                        Print, 'iTReturn: '+ String(iTReturn, FORMAT='(I4)')
-;                        Print, SVReturn[iTReturn, *]
-                        ;; test
-                        ;Print, SVReturn[iTReturn, *] 
-                        ;Print, scaAng
-                        ;IF scaAng LT 30.0/180.0*!PI THEN STOP
+                        ; IF SVReturn[iTReturn, 0] GT 2E-5 THEN Stop
+                        nPhotonBin[iTReturn] = nPhotonBin[iTReturn]+1
                     ENDIF
                                      
                 ENDIF
@@ -217,8 +208,8 @@ PRO MultipleScattering
                 ; not in the medium. DEAD
                 photonStatus = DEAD
                 Print, 'Photon '+ String(iPhoton, FORMAT='(I7)')+' is Dead!'
-                Print, String(len[iPhoton], FORMAT='(F6.2)')
-                Print, String(nScatterings[iPhoton], FORMAT='(I5)')
+                ;Print, String(len[iPhoton], FORMAT='(F8.2)')
+                ;Print, String(nScatterings[iPhoton], FORMAT='(I5)')
                 BREAK
             ENDELSE
 
@@ -234,7 +225,7 @@ PRO MultipleScattering
     W1 = Window(DIMENSION=[400,600])
     p1 = Plot(scaAngs*180.0/!PI, s11[0, *]/s11[0, 0], /CURRENT, $
               XTITLE='Scattering Angles($\deg$)', YTITLE='Phase Function(Normalized)', $
-              XRANGE=[0,180], YRANGE=[1E-4, 1], /YLOG)
+              XRANGE=[0,180], YRANGE=[1E-4, 1], /YLOG, FONT_SIZE=10)
     t = Text(0.5, 0.7, $
              ['$\sigma$='+String(muExt[0]*1000.0, FORMAT='(F5.1)')+ '$km^{-1}$', $
              '$R_{eff}$='+String(Reff[0], FORMAT='(F3.1)')+'$\mum$', $
@@ -244,8 +235,9 @@ PRO MultipleScattering
     W2 = Window(DIMENSION=[600,500])
     p1 = Plot(SVReturn[*, 0], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
               /CURRENT, TITLE='Stokes Vector', $
+              XRANGE=[0, 1E-5], YRANGE=[0, nClLayers*clDh], $
               COLOR='r', $
-              NAME='I', LAYOUT=[3, 1, 1])
+              NAME='I', LAYOUT=[3, 1, 1], FONT_SIZE=10)
     p2 = Plot(SVReturn[*, 1], Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
               /OVERPLOT, $
               COLOR='g', NAME='Q')
@@ -261,8 +253,8 @@ PRO MultipleScattering
     deRatio = (SVReturn[*, 0] - SVReturn[*,1])/(SVReturn[*, 0] + SVReturn[*,1])
     p5 = Plot(deRatio, Findgen(nBins)*BinWidth*!Constant.C0/1E9/2.0/1000.0, $
               /CURRENT, LAYOUT=[3,1,2], $
-              XRANGE=[0, 1.0], YRANGE=[0, 0.8], $
-              XTITLE='Depolarization Ratio', YTITLE='Height(km)')
+              XRANGE=[0, 1.0], YRANGE=[0, nClLayers*clDh], $
+              XTITLE='Depolarization Ratio', YTITLE='Height(km)', FONT_SIZE=10)
     
     ; Number of scatterings
     nNScatterings = HistoGram(nScatterings, BINSIZE=1, MAX=30, MIN=1, $
@@ -270,7 +262,7 @@ PRO MultipleScattering
     p6 = BarPlot(Findgen(30)+1, nNScatterings, /CURRENT, LAYOUT=[3,1,3], $
                  XRANGE=[-1,32], $
                  XTITLE='N Scatterings', YTITLE='Frequency', $
-                 FILL_COLOR='r')                          
+                 FILL_COLOR='r', FONT_SIZE=10)                          
 ;--------------------------------------------------------------------------------------;
     
 END
